@@ -1,32 +1,38 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
-# Install Node.js 22 + system deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git build-essential && \
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Install system deps
+RUN apt-get update && apt-get install -y \
+    curl xz-utils git build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create workspace dirs
-RUN mkdir -p /root/.clawdbot /root/clawd /root/.clawdbot-bin
+# Install Node.js 22 for clawdbot
+ENV NODE_DIR=/root/nodejs
+RUN mkdir -p $NODE_DIR && \
+    ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then NODE_ARCH="x64"; else NODE_ARCH="arm64"; fi && \
+    curl -sL https://nodejs.org/dist/v22.12.0/node-v22.12.0-linux-${NODE_ARCH}.tar.xz -o /tmp/node.tar.xz && \
+    tar xf /tmp/node.tar.xz -C /tmp && \
+    cp -r /tmp/node-v22.12.0-linux-${NODE_ARCH}/* $NODE_DIR/ && \
+    rm -rf /tmp/node*
 
-# Install clawdbot globally via npm
-RUN npm install -g @anthropic-ai/claude-code 2>/dev/null || \
-    npm install -g clawdbot 2>/dev/null || \
-    echo "clawdbot will be installed on first use"
+ENV PATH="$NODE_DIR/bin:/root/.clawdbot-bin:$PATH"
 
-WORKDIR /app/backend
+# Try to install clawdbot (may or may not be available)
+RUN npm install -g clawdbot 2>/dev/null || echo "clawdbot npm package not available - will use built-in AI tools instead"
 
-# Install Python deps
-COPY backend/requirements.txt .
+# Create workspace
+RUN mkdir -p /root/clawd /root/.clawdbot
+
+# Set up app
+WORKDIR /app
+COPY backend/requirements_railway.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code
-COPY backend/ .
+COPY backend/ /app/
 
-# Expose port
-ENV PORT=8080
-EXPOSE 8080
+# Rename server_railway.py to server.py for deployment
+RUN cp /app/server_railway.py /app/server.py
 
-# Run FastAPI
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]
+EXPOSE 8000
+
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
